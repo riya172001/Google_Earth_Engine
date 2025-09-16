@@ -1,0 +1,70 @@
+// Define AOI using the provided geometry
+var aoi = ee.Geometry.Polygon(
+  [[[86.86041052278301, 23.743676495386445],
+    [86.8604105227816, 23.739414240278016],
+    [86.86663324769756, 23.739414240278016],
+    [86.86663324769756, 23.743676495386445]]], null, false);
+
+// Center map on AOI
+Map.centerObject(aoi, 14);
+
+// Define time range
+var start_date = '2023-01-01';
+var end_date = '2023-12-31';
+
+// Load Sentinel-2 SR data and calculate EVI
+var s2 = ee.ImageCollection('COPERNICUS/S2_SR')
+  .filterBounds(aoi)
+  .filterDate(start_date, end_date)
+  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+  .map(function(img) {
+    var nir = img.select('B8');
+    var red = img.select('B4');
+    var blue = img.select('B2');
+    
+    // EVI formula
+    var evi = nir.subtract(red)
+      .multiply(2.5)
+      .divide(nir.add(red.multiply(6)).subtract(blue.multiply(7.5)).add(1))
+      .rename('EVI');
+    
+    return evi.copyProperties(img, ['system:time_start']);
+  });
+
+// Function to reduce EVI over AOI
+var eviFeatures = s2.map(function(img) {
+  var stats = img.reduceRegion({
+    reducer: ee.Reducer.mean(),
+    geometry: aoi,
+    scale: 10,
+    maxPixels: 1e13
+  });
+  return ee.Feature(null, {
+    'EVI': stats.get('EVI'),
+    'date': ee.Date(img.get('system:time_start')).format('YYYY-MM-dd')
+  });
+});
+
+// Convert FeatureCollection to a chart
+var chart = ui.Chart.feature.byFeature(eviFeatures, 'date', 'EVI')
+  .setOptions({
+    title: 'EVI Time Series over Specified AOI (Sentinel-2, 2023)',
+    hAxis: {title: 'Date'},
+    vAxis: {title: 'EVI'},
+    pointSize: 4,
+    lineWidth: 1,
+    colors: ['blue']
+  });
+print(chart);
+
+// Add the last EVI image in the collection to the map
+var last_image = s2.sort('system:time_start', false).first();
+var evi_vis_params = {
+  min: -1,
+  max: 1,
+  palette: ['brown', 'yellow', 'green']
+};
+Map.addLayer(last_image, evi_vis_params, 'Last EVI Image');
+
+// Add AOI outline
+Map.addLayer(aoi, {color: 'blue'}, 'AOI');
