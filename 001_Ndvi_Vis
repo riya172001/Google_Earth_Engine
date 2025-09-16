@@ -1,0 +1,60 @@
+// Define AOI using the provided geometry
+var aoi = ee.Geometry.Polygon(
+  [[[86.86041052278301, 23.743676495386445],
+    [86.8604105227816, 23.739414240278016],
+    [86.86663324769756, 23.739414240278016],
+    [86.86663324769756, 23.743676495386445]]], null, false);
+
+// Center map on AOI
+Map.centerObject(aoi, 14);
+
+// Define time range
+var start_date = '2023-01-01';
+var end_date = '2023-12-31';
+
+// Load Sentinel-2 SR data and calculate NDVI
+var s2 = ee.ImageCollection('COPERNICUS/S2_SR')
+  .filterBounds(aoi)
+  .filterDate(start_date, end_date)
+  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+  .map(function(img) {
+    var ndvi = img.normalizedDifference(['B8', 'B4']).rename('NDVI');
+    return ndvi.copyProperties(img, ['system:time_start']);
+  });
+
+// Function to reduce NDVI over AOI
+var ndviFeatures = s2.map(function(img) {
+  var stats = img.reduceRegion({
+    reducer: ee.Reducer.mean(),
+    geometry: aoi,
+    scale: 10,
+    maxPixels: 1e13
+  });
+  return ee.Feature(null, {
+    'NDVI': stats.get('NDVI'),
+    'date': ee.Date(img.get('system:time_start')).format('YYYY-MM-dd')
+  });
+});
+
+// Convert FeatureCollection to a chart
+var chart = ui.Chart.feature.byFeature(ndviFeatures, 'date', 'NDVI')
+  .setOptions({
+    title: 'NDVI Time Series over Specified AOI (Sentinel-2, 2023)',
+    hAxis: {title: 'Date'},
+    vAxis: {title: 'NDVI'},
+    pointSize: 4,
+    lineWidth: 1,
+    colors: ['green']
+  });
+print(chart);
+
+// Add the last image in the collection to the map
+var last_image = s2.sort('system:time_start', false).first();
+var ndvi_vis_params = {
+  min: 0,
+  max: 1,
+  palette: ['red', 'yellow', 'green']
+};
+Map.addLayer(last_image.clip(aoi), ndvi_vis_params, 'Last NDVI Image');
+
+
